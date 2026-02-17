@@ -1,10 +1,6 @@
 <?php
 $feedback = null;
 $feedbackType = null;
-$debugDetails = null;
-
-$fromAddress = getenv('MAIL_FROM_ADDRESS') ?: 'no-reply@example.com';
-$envelopeFrom = getenv('MAIL_ENVELOPE_FROM') ?: $fromAddress;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $senderName = trim($_POST['sender_name'] ?? '');
@@ -25,6 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $safeRecipient = str_replace(["\r", "\n"], '', $recipientEmail);
 
         // Legitimate sender envelope/header. User input goes into Reply-To only.
+        $fromAddress = 'no-reply@yourdomain.example';
         $headers = [
             'MIME-Version: 1.0',
             'Content-Type: text/plain; charset=UTF-8',
@@ -33,8 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'X-Mailer: PHP/' . phpversion(),
         ];
 
-        $additionalParams = '-f' . escapeshellarg($envelopeFrom);
-        $sent = mail($safeRecipient, $subject, $message, implode("\r\n", $headers), $additionalParams);
+        $sent = mail($safeRecipient, $subject, $message, implode("\r\n", $headers));
 
         if ($sent) {
             $feedback = 'Message sent successfully.';
@@ -42,8 +38,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $feedback = 'Message could not be sent by the server.';
             $feedbackType = 'error';
-            $lastError = error_get_last();
-            $debugDetails = $lastError['message'] ?? 'No PHP error was reported by mail().';
         }
     }
 }
@@ -135,18 +129,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <div class="container">
     <h1>Send Email</h1>
     <p class="hint">This form supports legitimate sending with a fixed <code>From</code> address and a user-defined <code>Reply-To</code>.</p>
-    <p class="hint">Set <code>MAIL_FROM_ADDRESS</code> and <code>MAIL_ENVELOPE_FROM</code> in your environment for production delivery.</p>
 
     <?php if ($feedback !== null): ?>
         <div class="feedback <?= htmlspecialchars($feedbackType, ENT_QUOTES, 'UTF-8'); ?>">
             <?= htmlspecialchars($feedback, ENT_QUOTES, 'UTF-8'); ?>
         </div>
-
-        <?php if ($feedbackType === 'error' && $debugDetails !== null): ?>
-            <div class="feedback error">
-                <strong>Debug:</strong> <?= htmlspecialchars($debugDetails, ENT_QUOTES, 'UTF-8'); ?>
-            </div>
-        <?php endif; ?>
     <?php endif; ?>
 
     <form method="post" action="">
