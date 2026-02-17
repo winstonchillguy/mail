@@ -145,6 +145,81 @@ function sendViaSmtp($recipient, $subject, $message, $fromAddress, $envelopeFrom
     return true;
 }
 
+
+function sendViaResendApi($recipient, $subject, $message, $fromAddress, $replyToName, $replyToAddress, &$debugDetails)
+{
+    $apiKey = getenv('RESEND_API_KEY') ?: '';
+    $from = getenv('RESEND_FROM') ?: $fromAddress;
+
+    if ($apiKey === '') {
+        $debugDetails = 'RESEND_API_KEY is empty.';
+        return false;
+    }
+
+    $payload = [
+        'from' => $from,
+        'to' => [$recipient],
+        'subject' => $subject,
+        'text' => $message,
+        'reply_to' => [$replyToName . ' <' . $replyToAddress . '>'],
+    ];
+
+    $jsonPayload = json_encode($payload);
+
+    if ($jsonPayload === false) {
+        $debugDetails = 'Failed to encode JSON payload.';
+        return false;
+    }
+
+    if (function_exists('curl_init')) {
+        $ch = curl_init('https://api.resend.com/emails');
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPHEADER => [
+                'Authorization: Bearer ' . $apiKey,
+                'Content-Type: application/json',
+            ],
+            CURLOPT_POSTFIELDS => $jsonPayload,
+            CURLOPT_TIMEOUT => 20,
+        ]);
+
+        $response = curl_exec($ch);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+
+        if ($response === false || $httpCode < 200 || $httpCode >= 300) {
+            $debugDetails = 'Resend API failed. HTTP ' . $httpCode . ($curlError !== '' ? ' | cURL: ' . $curlError : '') . ($response ? ' | Response: ' . $response : '');
+            return false;
+        }
+
+        return true;
+    }
+
+    $context = stream_context_create([
+        'http' => [
+            'method' => 'POST',
+            'header' => "Authorization: Bearer {$apiKey}
+Content-Type: application/json
+",
+            'content' => $jsonPayload,
+            'timeout' => 20,
+            'ignore_errors' => true,
+        ],
+    ]);
+
+    $response = @file_get_contents('https://api.resend.com/emails', false, $context);
+    $statusLine = $http_response_header[0] ?? '';
+
+    if ($response === false || !preg_match('/\s(2\d\d)\s/', $statusLine)) {
+        $debugDetails = 'Resend API failed via stream context. Status: ' . ($statusLine !== '' ? $statusLine : 'unknown') . ($response ? ' | Response: ' . $response : '');
+        return false;
+    }
+
+    return true;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $senderName = trim($_POST['sender_name'] ?? '');
     $senderEmail = trim($_POST['sender_email'] ?? '');
@@ -165,6 +240,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($mailTransport === 'smtp') {
             $sent = sendViaSmtp($safeRecipient, $subject, $message, $fromAddress, $envelopeFrom, $safeName, $safeSender, $debugDetails);
+        } elseif ($mailTransport === 'resend') {
+            $sent = sendViaResendApi($safeRecipient, $subject, $message, $fromAddress, $safeName, $safeSender, $debugDetails);
         } else {
             $headers = [
                 'MIME-Version: 1.0',
@@ -293,7 +370,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <div class="container">
     <h1>Send Email</h1>
     <p class="hint">Uses <code>From</code> from <code>MAIL_FROM_ADDRESS</code> and user-entered <code>Reply-To</code>.</p>
-    <p class="hint">Default transport is <code>mail()</code>. To use SMTP relay set: <code>MAIL_TRANSPORT=smtp</code>, <code>SMTP_HOST</code>, <code>SMTP_PORT</code>, <code>SMTP_USERNAME</code>, <code>SMTP_PASSWORD</code>, <code>SMTP_ENCRYPTION</code>.</p>
+    <p class="hint">Default transport is <code>mail()</code>. For InfinityFree, prefer API mode: <code>MAIL_TRANSPORT=resend</code>, <code>RESEND_API_KEY</code>, <code>RESEND_FROM</code>.</p>
+    <p class="hint">SMTP relay mode is still available with <code>MAIL_TRANSPORT=smtp</code>, <code>SMTP_HOST</code>, <code>SMTP_PORT</code>, <code>SMTP_USERNAME</code>, <code>SMTP_PASSWORD</code>, <code>SMTP_ENCRYPTION</code>.</p>
 
     <?php if ($feedback !== null): ?>
         <div class="feedback <?= htmlspecialchars($feedbackType, ENT_QUOTES, 'UTF-8'); ?>">
